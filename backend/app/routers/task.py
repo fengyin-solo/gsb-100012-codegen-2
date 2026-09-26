@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, BatchActionPayload, BatchActionResult, EntryPayload, PageResult
 from app.services.task import TaskService
 
 router = APIRouter(prefix="/api/task", tags=["检测任务"])
@@ -28,6 +28,39 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+# 注意：summary / export / batch-actions 必须放在 /{entry_id} 之前，
+# 否则 "summary"、"export" 会被当成 entry_id 解析，直接 422。
+@router.get("/summary")
+def summary() -> dict[str, int]:
+    """状态统计：列表页指标卡的数据源，与列表筛选口径一致。"""
+    return service.summary()
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出检测任务清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "task", "total": total, "items": items}
+
+
+@router.post("/batch-actions", response_model=BatchActionResult)
+def run_batch_action(payload: BatchActionPayload) -> BatchActionResult:
+    """批量执行分配任务、开始检测、提交复核。
+
+    逐条处理、逐条返回结果：单条失败只影响自己，不会拖累同批其它记录；
+    重复提交按幂等处理，已是目标状态的记录记为跳过；空选择直接说明原因。
+    """
+    action = payload.action.strip()
+    if not payload.ids:
+        return BatchActionResult(
+            ok=False,
+            action=action,
+            message="未选择任何检测任务单，批量操作未执行",
+        )
+    receipt = service.run_batch_action(payload.ids, action)
+    return BatchActionResult(**receipt)
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +89,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出检测任务清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "task", "total": total, "items": items}

@@ -28,6 +28,36 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class BatchActionPayload(BaseModel):
+    """批量动作请求：一个动作 + 一组记录 id，允许跨页挑选后一次提交。"""
+
+    action: str
+    ids: list[int] = Field(default_factory=list)
+
+
+class BatchItemResult(BaseModel):
+    """批量动作里单条记录的处理结果：每条都有明确交代，不静默丢弃。"""
+
+    id: int
+    label: str
+    ok: bool
+    skipped: bool = False
+    message: str
+
+
+class BatchActionResult(BaseModel):
+    """批量动作的整体回执：汇总数量 + 逐条结果。"""
+
+    ok: bool
+    action: str
+    message: str
+    total: int = 0
+    succeeded: int = 0
+    skipped: int = 0
+    failed: int = 0
+    results: list[BatchItemResult] = Field(default_factory=list)
+
+
 
 class SampleEntry(BaseModel):
     """检测样品明细结构。"""
