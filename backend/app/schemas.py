@@ -21,6 +21,36 @@ class ActionResult(BaseModel):
     entry: dict[str, Any] | None = None
 
 
+class BatchActionPayload(BaseModel):
+    """批量动作提交：一次携带多条任务，并可用幂等键拦截重复提交。"""
+
+    action: str
+    ids: list[int] = Field(default_factory=list)
+    idempotency_key: str | None = None
+
+
+class BatchItemResult(BaseModel):
+    """批量动作中单条记录的处理结果，失败也必须明确返回。"""
+
+    id: int
+    ok: bool
+    message: str
+    entry: dict[str, Any] | None = None
+
+
+class BatchActionResult(BaseModel):
+    ok: bool
+    action: str
+    total: int
+    requested: int
+    succeeded: int
+    failed: int
+    duplicates: int = 0
+    idempotent: bool = False
+    message: str
+    items: list[BatchItemResult] = Field(default_factory=list)
+
+
 class EntryPayload(BaseModel):
     """登记或修改一条业务记录时提交的字段集合。"""
 

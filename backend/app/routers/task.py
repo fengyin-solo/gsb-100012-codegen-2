@@ -5,7 +5,13 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import (
+    ActionResult,
+    BatchActionPayload,
+    BatchActionResult,
+    EntryPayload,
+    PageResult,
+)
 from app.services.task import TaskService
 
 router = APIRouter(prefix="/api/task", tags=["检测任务"])
@@ -20,14 +26,43 @@ STATUSES = ["待分配", "已分配", "检测中", "已完成", "已复核"]
 def list_entries(
     keyword: str | None = Query(default=None, description="按任务编号检索"),
     status: str | None = Query(default=None, description="待分配、已分配、检测中、已完成、已复核"),
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1),
 ) -> PageResult[dict]:
     """按任务编号与状态过滤检测任务列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
-    return PageResult(items=items, total=total, page=page, size=size)
+    if status and status not in STATUSES:
+        raise HTTPException(status_code=400, detail=f"任务状态必须是：{'、'.join(STATUSES)}")
+    items, total, effective_page = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    return PageResult(items=items, total=total, page=effective_page, size=size)
+
+
+@router.get("/metrics")
+def get_metrics() -> dict[str, int]:
+    """返回检测任务数量指标，和清单使用同一份状态数据。"""
+    return service.metrics()
+
+
+@router.post("/batch/actions", response_model=BatchActionResult)
+def run_batch_action(payload: BatchActionPayload) -> BatchActionResult:
+    """批量执行动作；每条任务独立返回成功或失败结果。"""
+    try:
+        result = service.run_batch_action(
+            action=payload.action,
+            ids=payload.ids,
+            idempotency_key=payload.idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return BatchActionResult(**result)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出检测任务清单：返回当前过滤条件下的全量数据。"""
+    items, total, _ = service.list_entries(page=1, size=10000)
+    return {"module": "task", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +91,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出检测任务清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "task", "total": total, "items": items}
